@@ -1,0 +1,61 @@
+# shard A services
+apiVersion: v1
+kind: Service
+metadata:
+  name: db-shard-a-primary
+spec:
+  ports:
+    - port: 5432
+      targetPort: 5432
+  selector:
+    app: db-shard-a
+    role: primary
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: db-shard-a-nodes
+spec:
+  clusterIP: None
+  ports:
+    - port: 5432
+      name: postgres
+  selector:
+    app: db-shard-a
+---
+# shard B services
+apiVersion: v1
+kind: Service
+metadata:
+  name: db-shard-b-primary
+spec:
+  ports:
+    - port: 5432
+      targetPort: 5432
+  selector:
+    app: db-shard-b
+    role: primary
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: db-shard-b-nodes
+spec:
+  clusterIP: None
+  ports:
+    - port: 5432
+      name: postgres
+  selector:
+    app: db-shard-b
+---
+# db service for coordinator
+apiVersion: v1
+kind: Service
+metadata:
+  name: db-coordinator-service
+spec:
+  ports:
+    - port: 5432
+      targetPort: 5432
+  selector:
+    app: db-coordinator

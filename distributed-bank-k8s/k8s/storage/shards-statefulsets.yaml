@@ -1,0 +1,139 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: db-shard-a
+spec:
+  serviceName: "db-shard-a-nodes"
+  replicas: 2
+  selector:
+    matchLabels:
+      app: db-shard-a
+  template:
+    metadata:
+      labels:
+        app: db-shard-a
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:15-alpine
+          command: ["/bin/bash", "/scripts/entrypoint-wrapper.sh"]
+          env:
+            - name: POSTGRES_DB
+              value: bank_shard_a
+            - name: POSTGRES_USER
+              value: postgres
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: bank-db-secrets
+                  key: POSTGRES_PASSWORD
+            - name: REPLICATION_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: bank-db-secrets
+                  key: REPLICATION_PASSWORD
+            - name: HEADLESS_SERVICE_NAME
+              value: db-shard-a-nodes
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          ports:
+            - containerPort: 5432
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "postgres"]
+            initialDelaySeconds: 5
+            periodSeconds: 3
+          volumeMounts:
+            - name: db-data
+              mountPath: /var/lib/postgresql/data
+            - name: scripts
+              mountPath: /scripts
+            - name: init-sql
+              mountPath: /docker-entrypoint-initdb.d/init.sql
+              subPath: init_shard_a.sql
+      volumes:
+        - name: scripts
+          configMap:
+            name: db-init-scripts
+            defaultMode: 0755
+        - name: init-sql
+          configMap:
+            name: db-init-scripts
+  volumeClaimTemplates:
+    - metadata:
+        name: db-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 1Gi
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: db-shard-b
+spec:
+  serviceName: "db-shard-b-nodes"
+  replicas: 2
+  selector:
+    matchLabels:
+      app: db-shard-b
+  template:
+    metadata:
+      labels:
+        app: db-shard-b
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:15-alpine
+          command: ["/bin/bash", "/scripts/entrypoint-wrapper.sh"]
+          env:
+            - name: POSTGRES_DB
+              value: bank_shard_b
+            - name: POSTGRES_USER
+              value: postgres
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: bank-db-secrets
+                  key: POSTGRES_PASSWORD
+            - name: REPLICATION_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: bank-db-secrets
+                  key: REPLICATION_PASSWORD
+            - name: HEADLESS_SERVICE_NAME
+              value: db-shard-b-nodes
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          ports:
+            - containerPort: 5432
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "postgres"]
+            initialDelaySeconds: 5
+            periodSeconds: 3
+          volumeMounts:
+            - name: db-data
+              mountPath: /var/lib/postgresql/data
+            - name: scripts
+              mountPath: /scripts
+            - name: init-sql
+              mountPath: /docker-entrypoint-initdb.d/init.sql
+              subPath: init_shard_b.sql
+      volumes:
+        - name: scripts
+          configMap:
+            name: db-init-scripts
+            defaultMode: 0755
+        - name: init-sql
+          configMap:
+            name: db-init-scripts
+  volumeClaimTemplates:
+    - metadata:
+        name: db-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 1Gi

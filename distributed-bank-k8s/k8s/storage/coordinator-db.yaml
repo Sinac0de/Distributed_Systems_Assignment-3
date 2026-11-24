@@ -1,0 +1,55 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: db-coordinator
+spec:
+  serviceName: "db-coordinator-service"
+  replicas: 1
+  selector:
+    matchLabels:
+      app: db-coordinator
+  template:
+    metadata:
+      labels:
+        app: db-coordinator
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:15-alpine
+          env:
+            - name: POSTGRES_DB
+              value: coordinator_db
+            - name: POSTGRES_USER
+              value: postgres
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: bank-db-secrets
+                  key: POSTGRES_PASSWORD
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          ports:
+            - containerPort: 5432
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "postgres"]
+            initialDelaySeconds: 5
+            periodSeconds: 3
+          volumeMounts:
+            - name: db-data
+              mountPath: /var/lib/postgresql/data
+            - name: init-sql
+              mountPath: /docker-entrypoint-initdb.d/init.sql
+              subPath: init_coordinator.sql
+      volumes:
+        - name: init-sql
+          configMap:
+            name: db-init-scripts
+  volumeClaimTemplates:
+    - metadata:
+        name: db-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 1Gi

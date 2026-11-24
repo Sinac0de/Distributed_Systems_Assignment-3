@@ -1,0 +1,106 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: db-init-scripts
+data:
+  # Initialization script for the database
+  entrypoint-wrapper.sh: |
+    #!/bin/bash
+    set -e
+
+    POD_INDEX=${HOSTNAME##*-}
+    PRIMARY_HOST="${HEADLESS_SERVICE_NAME}-0.${HEADLESS_SERVICE_NAME}"
+
+    echo "[DB-INIT] Starting initialization for ${HOSTNAME} (Index: ${POD_INDEX})..."
+
+    if [ "$POD_INDEX" -eq "0" ]; then
+      echo "[DB-INIT] Node is PRIMARY. Configuring replication rules..."
+      
+      mkdir -p /docker-entrypoint-initdb.d
+      cat << 'EOF' > /docker-entrypoint-initdb.d/01-replication.sh
+      #!/bin/bash
+      set -e
+      echo "host replication replicator 0.0.0.0/0 md5" >> "$PGDATA/pg_hba.conf"
+      psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<-EOSQL
+          CREATE ROLE replicator WITH REPLICATION LOGIN PASSWORD '$REPLICATION_PASSWORD';
+      EOSQL
+    EOF
+      chmod +x /docker-entrypoint-initdb.d/01-replication.sh
+
+      exec docker-entrypoint.sh postgres \
+        -c wal_level=replica \
+        -c max_wal_senders=10 \
+        -c max_replication_slots=10 \
+        -c hot_standby=on \
+        -c max_prepared_transactions=100
+    else
+      echo "[DB-INIT] Node is STANDBY. Waiting for primary (${PRIMARY_HOST}) to become ready..."
+      until pg_isready -h "${PRIMARY_HOST}" -p 5432 -U postgres; do
+        sleep 2
+      done
+
+      if [ ! -s "$PGDATA/PG_VERSION" ]; then
+        echo "[DB-INIT] PGDATA is empty. Running pg_basebackup from primary..."
+        rm -rf "$PGDATA"/*
+        PGPASSWORD="$REPLICATION_PASSWORD" pg_basebackup \
+          -h "${PRIMARY_HOST}" \
+          -p 5432 \
+          -U replicator \
+          -D "$PGDATA" \
+          -Fp -Xs -R
+        chmod 700 "$PGDATA"
+        echo "[DB-INIT] Backup finished. Standby signal generated."
+      fi
+
+      exec docker-entrypoint.sh postgres \
+        -c hot_standby=on \
+        -c max_prepared_transactions=100
+    fi
+
+  # Shard A accounts table (range A0001 to A1000)
+  init_shard_a.sql: |
+    CREATE TABLE IF NOT EXISTS accounts (
+        account_id VARCHAR(10) PRIMARY KEY,
+        balance NUMERIC(12, 2) NOT NULL CHECK (balance >= 0),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    DO $$
+    BEGIN
+        FOR i IN 1..1000 LOOP
+            INSERT INTO accounts (account_id, balance)
+            VALUES (LPAD(i::text, 4, '0'), 1000.00)
+            ON CONFLICT (account_id) DO NOTHING;
+        END LOOP;
+        -- پیشوند A به تمام حساب‌ها
+        UPDATE accounts SET account_id = 'A' || account_id WHERE account_id NOT LIKE 'A%';
+    END $$;
+
+  # Shard B accounts table (range A1001 to A2000)
+  init_shard_b.sql: |
+    CREATE TABLE IF NOT EXISTS accounts (
+        account_id VARCHAR(10) PRIMARY KEY,
+        balance NUMERIC(12, 2) NOT NULL CHECK (balance >= 0),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    DO $$
+    BEGIN
+        FOR i IN 1001..2000 LOOP
+            INSERT INTO accounts (account_id, balance)
+            VALUES ('A' || i::text, 1000.00)
+            ON CONFLICT (account_id) DO NOTHING;
+        END LOOP;
+    END $$;
+
+  # log table for coordinator transactions
+  init_coordinator.sql: |
+    CREATE TABLE IF NOT EXISTS coordinator_tx_log (
+        tx_id VARCHAR(64) PRIMARY KEY,
+        source_acc VARCHAR(10) NOT NULL,
+        target_acc VARCHAR(10) NOT NULL,
+        amount NUMERIC(12, 2) NOT NULL,
+        state VARCHAR(20) NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );

@@ -1,0 +1,131 @@
+# --- Transaction Coordinator Deployment & Service ---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: coordinator-deployment
+  labels:
+    app: coordinator
+    tier: control
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: coordinator
+  template:
+    metadata:
+      labels:
+        app: coordinator
+        tier: control
+    spec:
+      containers:
+        - name: coordinator
+          image: distributed-bank-coordinator:k8s
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: DB_HOST
+              value: "db-coordinator-service"
+            - name: DB_PORT
+              value: "5432"
+            - name: DB_NAME
+              value: "coordinator_db"
+            - name: DB_USER
+              value: "postgres"
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: bank-db-secrets
+                  key: POSTGRES_PASSWORD
+            - name: SHARD_A_URL
+              value: "http://shard-a-service:8000"
+            - name: SHARD_B_URL
+              value: "http://shard-b-service:8000"
+          ports:
+            - containerPort: 8000
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 3
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: coordinator-service
+spec:
+  ports:
+    - port: 8000
+      targetPort: 8000
+  selector:
+    app: coordinator
+---
+# --- Shard-Aware Gateway Deployment & NodePort Service ---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gateway-deployment
+  labels:
+    app: gateway
+    tier: ingress
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: gateway
+  template:
+    metadata:
+      labels:
+        app: gateway
+        tier: ingress
+    spec:
+      containers:
+        - name: gateway
+          image: distributed-bank-gateway:k8s
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: SHARD_A_SERVICE
+              value: "http://shard-a-service:8000"
+            - name: SHARD_B_SERVICE
+              value: "http://shard-b-service:8000"
+            - name: COORDINATOR_SERVICE
+              value: "http://coordinator-service:8000"
+          ports:
+            - containerPort: 8000
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "64Mi"
+            limits:
+              cpu: "300m"
+              memory: "128Mi"
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: 8000
+            initialDelaySeconds: 3
+            periodSeconds: 3
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gateway-service
+spec:
+  type: NodePort
+  ports:
+    - port: 8000
+      targetPort: 8000
+      nodePort: 30080
+  selector:
+    app: gateway

@@ -1,0 +1,161 @@
+# --- Shard A Deployment & Service ---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: shard-a-deployment
+  labels:
+    app: shard-a-replica
+    tier: compute
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: shard-a-replica
+  template:
+    metadata:
+      labels:
+        app: shard-a-replica
+        tier: compute
+    spec:
+      containers:
+        - name: replica
+          image: distributed-bank-replica:k8s
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: SHARD_NAME
+              value: "Shard-A"
+            - name: DB_HOST
+              value: "db-shard-a-primary"
+            - name: DB_PORT
+              value: "5432"
+            - name: DB_NAME
+              value: "bank_shard_a"
+            - name: DB_USER
+              value: "postgres"
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: bank-db-secrets
+                  key: POSTGRES_PASSWORD
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          ports:
+            - containerPort: 8000
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "256Mi"
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 3
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: shard-a-service
+spec:
+  ports:
+    - port: 8000
+      targetPort: 8000
+  selector:
+    app: shard-a-replica
+---
+# --- Shard B Deployment & Service ---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: shard-b-deployment
+  labels:
+    app: shard-b-replica
+    tier: compute
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: shard-b-replica
+  template:
+    metadata:
+      labels:
+        app: shard-b-replica
+        tier: compute
+    spec:
+      containers:
+        - name: replica
+          image: distributed-bank-replica:k8s
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: SHARD_NAME
+              value: "Shard-B"
+            - name: DB_HOST
+              value: "db-shard-b-primary"
+            - name: DB_PORT
+              value: "5432"
+            - name: DB_NAME
+              value: "bank_shard_b"
+            - name: DB_USER
+              value: "postgres"
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: bank-db-secrets
+                  key: POSTGRES_PASSWORD
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          ports:
+            - containerPort: 8000
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "256Mi"
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 3
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: shard-b-service
+spec:
+  ports:
+    - port: 8000
+      targetPort: 8000
+  selector:
+    app: shard-b-replica
